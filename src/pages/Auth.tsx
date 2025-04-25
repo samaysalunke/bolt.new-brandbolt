@@ -8,7 +8,7 @@ import { supabase } from '../lib/supabase';
 export const Auth: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { signIn, signUp, resetPassword, updatePassword, isLoading, error, skipAuth } = useAuthStore();
+  const { signIn, signUp, resetPassword, updatePassword, isLoading, error } = useAuthStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -41,11 +41,6 @@ export const Auth: React.FC = () => {
     };
   }, [cooldownTime]);
 
-  const handleSkip = async () => {
-    await skipAuth();
-    navigate('/');
-  };
-
   const validatePassword = (password: string): boolean => {
     if (password.length < 6) {
       setValidationError('Password must be at least 6 characters long');
@@ -63,10 +58,20 @@ export const Auth: React.FC = () => {
     }
 
     try {
+      setIsButtonDisabled(true);
       await resetPassword(email);
       setResetEmailSent(true);
+      setValidationError(null);
     } catch (error) {
-      setValidationError((error as Error).message);
+      const errorMessage = (error as Error).message;
+      if (errorMessage.includes('rate_limit')) {
+        setCooldownTime(35);
+        setValidationError('Please wait 35 seconds before requesting another email');
+      } else {
+        setValidationError(errorMessage);
+      }
+    } finally {
+      setIsButtonDisabled(false);
     }
   };
 
@@ -80,10 +85,13 @@ export const Auth: React.FC = () => {
     }
 
     try {
+      setIsButtonDisabled(true);
       await updatePassword(password);
       navigate('/');
     } catch (error) {
       setValidationError((error as Error).message);
+    } finally {
+      setIsButtonDisabled(false);
     }
   };
 
@@ -157,7 +165,9 @@ export const Auth: React.FC = () => {
     }
   };
 
-  const getErrorMessage = (error: string) => {
+  const getErrorMessage = (error: string | null) => {
+    if (!error) return '';
+    
     switch (error) {
       case 'Invalid login credentials':
         return 'The email or password you entered is incorrect. Please try again.';
@@ -393,15 +403,6 @@ export const Auth: React.FC = () => {
                   <span className="px-2 bg-white text-gray-500">Development mode</span>
                 </div>
               </div>
-
-              <Button
-                type="button"
-                variant="outline"
-                fullWidth
-                onClick={handleSkip}
-              >
-                Skip Authentication
-              </Button>
             </form>
           ) : (
             <form className="space-y-6" onSubmit={handleAuthSubmit}>

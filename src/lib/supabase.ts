@@ -3,36 +3,30 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error('Missing Supabase environment variables');
+}
+
+console.log('Initializing Supabase client with URL:', supabaseUrl);
+
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
-    autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: true,
     flowType: 'pkce',
-    storage: {
-      getItem: (key) => {
-        try {
-          return Promise.resolve(localStorage.getItem(key));
-        } catch (error) {
-          return Promise.reject(error);
-        }
-      },
-      setItem: (key, value) => {
-        try {
-          localStorage.setItem(key, value);
-          return Promise.resolve();
-        } catch (error) {
-          return Promise.reject(error);
-        }
-      },
-      removeItem: (key) => {
-        try {
-          localStorage.removeItem(key);
-          return Promise.resolve();
-        } catch (error) {
-          return Promise.reject(error);
-        }
-      },
-    },
+    autoRefreshToken: true,
+    debug: true,
+    storage: window.localStorage,
+    storageKey: 'supabase.auth.token',
   },
+});
+
+// Log initial auth state
+supabase.auth.getSession().then(({ data: { session }, error }) => {
+  console.log('Initial auth state:', {
+    hasSession: !!session,
+    error: error?.message,
+    provider: session?.user?.app_metadata?.provider,
+    redirectUrl: window.location.origin + '/auth/callback'
+  });
 });

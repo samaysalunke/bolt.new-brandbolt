@@ -3,44 +3,174 @@ import { supabase } from '../lib/supabase';
 import { User, Session } from '@supabase/supabase-js';
 
 interface AuthState {
-  user: User | null;
   session: Session | null;
+  user: User | null;
   isLoading: boolean;
   error: string | null;
-  signUp: (email: string, password: string) => Promise<void>;
-  signIn: (email: string, password: string) => Promise<void>;
-  signInWithLinkedIn: () => Promise<void>;
-  signOut: () => Promise<void>;
-  getCurrentUser: () => Promise<void>;
-  linkLinkedIn: () => Promise<void>;
-  resetPassword: (email: string) => Promise<void>;
-  updatePassword: (newPassword: string) => Promise<void>;
-  skipAuth: () => Promise<void>;
+  isAuthenticated: boolean;
+  isInitialized: boolean;
 }
 
-export const useAuthStore = create<AuthState>((set, get) => ({
-  user: null,
+interface AuthActions {
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<void>;
+  signOut: () => Promise<void>;
+  getCurrentUser: () => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<void>;
+  setError: (error: string | null) => void;
+  clearError: () => void;
+  initializeAuth: () => Promise<void>;
+}
+
+const initialState: AuthState = {
   session: null,
-  isLoading: false,
+  user: null,
+  isLoading: true,
   error: null,
+  isAuthenticated: false,
+  isInitialized: false
+};
 
-  skipAuth: async () => {
-    const mockUser = {
-      id: 'dev-user',
-      email: 'dev@example.com',
-      app_metadata: {},
-      user_metadata: {},
-      aud: 'authenticated',
-      created_at: new Date().toISOString(),
-    } as User;
+export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
+  ...initialState,
 
-    const mockSession = {
-      user: mockUser,
-      access_token: 'mock-token',
-      refresh_token: 'mock-refresh-token',
-    } as Session;
+  initializeAuth: async () => {
+    try {
+      set({ isLoading: true, error: null });
+      
+      // First check if we have a session in storage
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError) {
+        console.error('Error getting session:', sessionError);
+        throw sessionError;
+      }
 
-    set({ user: mockUser, session: mockSession, error: null });
+      if (!session) {
+        set({ 
+          session: null, 
+          user: null, 
+          isAuthenticated: false,
+          isLoading: false,
+          isInitialized: true
+        });
+        return;
+      }
+
+      // If we have a session, get the user
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError) {
+        console.error('Error getting user:', userError);
+        throw userError;
+      }
+
+      if (!user) {
+        set({ 
+          session: null, 
+          user: null, 
+          isAuthenticated: false,
+          isLoading: false,
+          isInitialized: true
+        });
+        return;
+      }
+
+      set({ 
+        session, 
+        user,
+        isAuthenticated: true,
+        isLoading: false,
+        isInitialized: true,
+        error: null
+      });
+    } catch (error) {
+      console.error('Error initializing auth:', error);
+      set({ 
+        session: null, 
+        user: null, 
+        isAuthenticated: false,
+        isLoading: false,
+        isInitialized: true,
+        error: error instanceof Error ? error.message : 'Failed to initialize auth'
+      });
+    }
+  },
+
+  getCurrentUser: async () => {
+    const { isInitialized } = get();
+    if (!isInitialized) {
+      await get().initializeAuth();
+      return;
+    }
+
+    try {
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError) {
+        console.error('Error getting session:', sessionError);
+        set({ 
+          session: null, 
+          user: null, 
+          isAuthenticated: false,
+          isLoading: false,
+          error: sessionError.message 
+        });
+        return;
+      }
+
+      if (!session) {
+        set({ 
+          session: null, 
+          user: null, 
+          isAuthenticated: false,
+          isLoading: false 
+        });
+        return;
+      }
+
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError) {
+        console.error('Error getting user:', userError);
+        set({ 
+          session: null, 
+          user: null, 
+          isAuthenticated: false,
+          isLoading: false,
+          error: userError.message 
+        });
+        return;
+      }
+
+      if (!user) {
+        set({ 
+          session: null, 
+          user: null, 
+          isAuthenticated: false,
+          isLoading: false 
+        });
+        return;
+      }
+
+      set({ 
+        session, 
+        user,
+        isAuthenticated: true,
+        isLoading: false,
+        error: null
+      });
+    } catch (error) {
+      console.error('Error in getCurrentUser:', error);
+      set({ 
+        session: null, 
+        user: null, 
+        isAuthenticated: false,
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Failed to get current user'
+      });
+    }
   },
 
   resetPassword: async (email: string) => {
@@ -129,70 +259,12 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  signInWithLinkedIn: async () => {
-    try {
-      set({ isLoading: true, error: null });
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'linkedin_oidc',
-        options: {
-          redirectTo: `${import.meta.env.VITE_APP_URL}/auth/callback`,
-          scopes: 'openid profile email w_member_social',
-          queryParams: {
-            prompt: 'consent',
-            access_type: 'offline',
-          },
-        },
-      });
-
-      if (error) throw error;
-      if (!data.url) throw new Error('No OAuth URL returned');
-
-      // Store the current URL to redirect back after auth
-      localStorage.setItem('preAuthPath', window.location.pathname);
-      
-      // Redirect to LinkedIn
-      window.location.href = data.url;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      set({ isLoading: false });
-    }
-  },
-
-  linkLinkedIn: async () => {
-    try {
-      set({ isLoading: true, error: null });
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'linkedin_oidc',
-        options: {
-          redirectTo: `${import.meta.env.VITE_APP_URL}/settings`,
-          scopes: 'openid profile email w_member_social',
-          queryParams: {
-            prompt: 'consent',
-            access_type: 'offline',
-          },
-        },
-      });
-
-      if (error) throw error;
-      if (!data.url) throw new Error('No OAuth URL returned');
-
-      // Store the current URL to redirect back after auth
-      localStorage.setItem('preAuthPath', window.location.pathname);
-      
-      // Redirect to LinkedIn
-      window.location.href = data.url;
-    } catch (error) {
-      set({ error: (error as Error).message });
-      set({ isLoading: false });
-    }
-  },
-
   signOut: async () => {
     try {
       set({ isLoading: true, error: null });
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-      set({ user: null, session: null });
+      set({ user: null, session: null, isAuthenticated: false });
     } catch (error) {
       set({ error: (error as Error).message });
     } finally {
@@ -200,17 +272,11 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     }
   },
 
-  getCurrentUser: async () => {
-    try {
-      set({ isLoading: true, error: null });
-      const { data: { user, session }, error } = await supabase.auth.getSession();
-      if (error) throw error;
-      set({ user, session });
-    } catch (error) {
-      set({ error: (error as Error).message });
-      set({ user: null, session: null });
-    } finally {
-      set({ isLoading: false });
-    }
+  setError: (error: string | null) => {
+    set({ error });
+  },
+
+  clearError: () => {
+    set({ error: null });
   },
 }));
