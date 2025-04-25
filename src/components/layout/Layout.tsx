@@ -1,25 +1,28 @@
 import React, { useState } from 'react';
 import { Outlet } from 'react-router-dom';
+import { useAuthStore } from '../../store/authStore';
 import Sidebar from './Sidebar';
 import Navbar from './Navbar';
 
 const Layout: React.FC = () => {
+  const { user } = useAuthStore();
+  const isLinkedInConnected = user?.app_metadata?.provider === 'linkedin_oidc';
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  
-  const toggleSidebar = () => {
-    setSidebarOpen(!sidebarOpen);
-  };
+
+  // If not connected to LinkedIn, just show the outlet without navigation
+  if (!isLinkedInConnected) {
+    return <Outlet />;
+  }
 
   return (
-    <div className="h-screen flex bg-gray-50">
-      <Sidebar isOpen={sidebarOpen} toggleSidebar={toggleSidebar} />
-      
-      <div className="flex-1 flex flex-col md:pl-64 transition-all duration-300">
-        <Navbar toggleSidebar={toggleSidebar} />
-        <main className="flex-1 overflow-y-auto p-4 md:p-6">
+    <div className="min-h-screen bg-gray-50">
+      <Sidebar isOpen={sidebarOpen} toggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+      <main className="lg:pl-64">
+        <Navbar toggleSidebar={() => setSidebarOpen(!sidebarOpen)} />
+        <div className="max-w-7xl mx-auto p-4 md:p-6">
           <Outlet />
-        </main>
-      </div>
+        </div>
+      </main>
     </div>
   );
 };

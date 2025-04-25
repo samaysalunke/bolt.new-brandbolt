@@ -1,120 +1,166 @@
 import { create } from 'zustand';
-import { linkedInService } from '../services/linkedinService';
 import { supabase } from '../lib/supabase';
 
 interface LinkedInProfile {
   id: string;
-  linkedin_id: string;
-  first_name: string;
-  last_name: string;
-  email: string;
-  profile_picture_url?: string;
+  firstName: string;
+  lastName: string;
   headline?: string;
+  profilePicture?: string;
+  email: string;
   industry?: string;
+  location?: string;
+  connections?: number;
 }
 
 interface LinkedInPost {
   id: string;
-  post_urn: string;
   content: string;
   visibility: string;
   published_at: string;
   likes_count: number;
   comments_count: number;
   shares_count: number;
-  impressions_count: number;
-  engagement_rate: number;
 }
 
-interface LinkedInAnalytics {
-  date: string;
-  followers_count: number;
-  impressions_count: number;
-  engagement_rate: number;
-  profile_views: number;
+interface LinkedInStats {
+  followers: number;
+  connections: number;
+  profileViews: number;
+  postImpressions: number;
+  engagementRate: number;
 }
 
 interface LinkedInState {
   profile: LinkedInProfile | null;
+  stats: LinkedInStats | null;
   posts: LinkedInPost[];
-  analytics: LinkedInAnalytics[];
   isLoading: boolean;
   error: string | null;
-  lastSynced: Date | null;
-  syncData: () => Promise<void>;
-  loadProfile: () => Promise<void>;
-  loadPosts: () => Promise<void>;
-  loadAnalytics: () => Promise<void>;
+  lastFetched: Date | null;
 }
 
-export const useLinkedInStore = create<LinkedInState>((set, get) => ({
+interface LinkedInActions {
+  fetchLinkedInData: () => Promise<void>;
+  clearError: () => void;
+}
+
+const initialState: LinkedInState = {
   profile: null,
+  stats: null,
   posts: [],
-  analytics: [],
   isLoading: false,
   error: null,
-  lastSynced: null,
+  lastFetched: null,
+};
 
-  syncData: async () => {
+export const useLinkedInStore = create<LinkedInState & LinkedInActions>((set) => ({
+  ...initialState,
+
+  fetchLinkedInData: async () => {
     try {
       set({ isLoading: true, error: null });
-      await linkedInService.syncAll();
-      await Promise.all([
-        get().loadProfile(),
-        get().loadPosts(),
-        get().loadAnalytics(),
-      ]);
-      set({ lastSynced: new Date() });
-    } catch (error) {
-      set({ error: error instanceof Error ? error.message : 'Failed to sync LinkedIn data' });
-    } finally {
-      set({ isLoading: false });
-    }
-  },
 
-  loadProfile: async () => {
-    try {
-      const { data, error } = await supabase
+      // Get the current session to check for LinkedIn token
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session?.provider_token) {
+        throw new Error('No LinkedIn access token available');
+      }
+
+      // Fetch LinkedIn profile data
+      const profileResponse = await fetch('https://api.linkedin.com/v2/me', {
+        headers: {
+          'Authorization': `Bearer ${session.provider_token}`,
+          'X-Restli-Protocol-Version': '2.0.0',
+        },
+      });
+
+      if (!profileResponse.ok) {
+        console.error('LinkedIn API Error:', {
+          status: profileResponse.status,
+          statusText: profileResponse.statusText,
+        });
+        throw new Error('Failed to fetch LinkedIn data');
+      }
+
+      const profileData = await profileResponse.json();
+      
+      // Fetch posts data
+      const postsResponse = await fetch(
+        'https://api.linkedin.com/v2/ugcPosts?q=authors&authors=List(urn:li:person:' + profileData.id + ')',
+        {
+          headers: {
+            'Authorization': `Bearer ${session.provider_token}`,
+            'X-Restli-Protocol-Version': '2.0.0',
+          },
+        }
+      );
+
+      if (!postsResponse.ok) {
+        console.error('LinkedIn Posts API Error:', {
+          status: postsResponse.status,
+          statusText: postsResponse.statusText,
+        });
+      }
+
+      const postsData = await postsResponse.json();
+      console.log('LinkedIn Posts Data:', postsData);
+
+      // Transform the profile data
+      const profile: LinkedInProfile = {
+        id: profileData.id,
+        firstName: profileData.localizedFirstName,
+        lastName: profileData.localizedLastName,
+        headline: profileData.localizedHeadline,
+        profilePicture: profileData.profilePicture?.['displayImage~']?.elements[0]?.identifiers[0]?.identifier,
+        email: session.user?.email || '',
+        industry: profileData.localizedIndustry,
+      };
+
+      // Transform the posts data
+      const posts: LinkedInPost[] = postsData.elements?.map((post: any) => ({
+        id: post.id,
+        content: post.specificContent?.['com.linkedin.ugc.ShareContent']?.shareCommentary?.text || '',
+        visibility: post.visibility?.['com.linkedin.ugc.MemberNetworkVisibility'] || 'CONNECTIONS',
+        published_at: new Date(post.created?.time || Date.now()).toISOString(),
+        likes_count: post.socialDetail?.totalSocialActivityCounts?.numLikes || 0,
+        comments_count: post.socialDetail?.totalSocialActivityCounts?.numComments || 0,
+        shares_count: post.socialDetail?.totalSocialActivityCounts?.numShares || 0,
+      })) || [];
+
+      // Store in Supabase for persistence
+      const { error: dbError } = await supabase
         .from('linkedin_profiles')
-        .select('*')
-        .single();
+        .upsert({
+          user_id: session.user.id,
+          profile_data: profile,
+          posts_data: posts,
+          last_synced: new Date().toISOString(),
+        }, {
+          onConflict: 'user_id'
+        });
 
-      if (error) throw error;
-      set({ profile: data });
+      if (dbError) {
+        console.error('Database Error:', dbError);
+        throw dbError;
+      }
+
+      set({
+        profile,
+        posts,
+        lastFetched: new Date(),
+        isLoading: false,
+        error: null,
+      });
     } catch (error) {
-      console.error('Error loading LinkedIn profile:', error);
-      set({ error: error instanceof Error ? error.message : 'Failed to load LinkedIn profile' });
+      console.error('Error fetching LinkedIn data:', error);
+      set({
+        error: error instanceof Error ? error.message : 'Failed to fetch LinkedIn data',
+        isLoading: false,
+      });
     }
   },
 
-  loadPosts: async () => {
-    try {
-      const { data, error } = await supabase
-        .from('linkedin_posts')
-        .select('*')
-        .order('published_at', { ascending: false });
-
-      if (error) throw error;
-      set({ posts: data });
-    } catch (error) {
-      console.error('Error loading LinkedIn posts:', error);
-      set({ error: error instanceof Error ? error.message : 'Failed to load LinkedIn posts' });
-    }
-  },
-
-  loadAnalytics: async () => {
-    try {
-      const { data, error } = await supabase
-        .from('linkedin_analytics')
-        .select('*')
-        .order('date', { ascending: false })
-        .limit(30);
-
-      if (error) throw error;
-      set({ analytics: data });
-    } catch (error) {
-      console.error('Error loading LinkedIn analytics:', error);
-      set({ error: error instanceof Error ? error.message : 'Failed to load LinkedIn analytics' });
-    }
-  },
+  clearError: () => set({ error: null }),
 })); 

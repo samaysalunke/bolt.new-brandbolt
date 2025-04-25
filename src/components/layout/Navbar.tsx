@@ -1,5 +1,5 @@
 import React from 'react';
-import { Menu, Bell, Search } from 'lucide-react';
+import { Menu, Bell, Search, Linkedin } from 'lucide-react';
 import Button from '../common/Button';
 import { useAuthStore } from '../../store/authStore';
 
@@ -9,7 +9,7 @@ interface NavbarProps {
 
 const Navbar: React.FC<NavbarProps> = ({ toggleSidebar }) => {
   const { user, signInWithLinkedIn } = useAuthStore();
-  const isLinkedInConnected = user?.app_metadata?.provider === 'linkedin';
+  const isLinkedInConnected = user?.app_metadata?.provider === 'linkedin_oidc';
 
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
@@ -45,16 +45,24 @@ const Navbar: React.FC<NavbarProps> = ({ toggleSidebar }) => {
             <span className="absolute top-1 right-1.5 w-2 h-2 bg-red-500 rounded-full"></span>
           </button>
           
-          {!isLinkedInConnected && (
-            <Button 
-              variant="primary" 
-              size="sm"
-              className="hidden md:inline-flex"
-              onClick={() => signInWithLinkedIn()}
-            >
-              Connect LinkedIn
-            </Button>
-          )}
+          <div className="flex items-center space-x-4">
+            {!isLinkedInConnected && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={signInWithLinkedIn}
+                icon={<Linkedin size={16} />}
+              >
+                Connect LinkedIn
+              </Button>
+            )}
+            {isLinkedInConnected && (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                <Linkedin size={14} className="mr-1" />
+                Connected
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </header>

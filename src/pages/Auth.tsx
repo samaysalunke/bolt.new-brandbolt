@@ -2,32 +2,45 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Linkedin, AlertCircle, ArrowLeft } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
+import { useAuth } from '../modules/auth/hooks/useAuth';
 import Button from '../components/common/Button';
 import { supabase } from '../lib/supabase';
 
 export const Auth: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { signIn, signUp, resetPassword, updatePassword, isLoading, error } = useAuthStore();
+  const { signIn, error: authError, isAuthenticated, isLoading: authLoading } = useAuthStore();
+  const { isLoading: hookLoading } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isExistingUser, setIsExistingUser] = useState<boolean | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [cooldownTime, setCooldownTime] = useState(0);
   const [isButtonDisabled, setIsButtonDisabled] = useState(false);
-  const [showResetPassword, setShowResetPassword] = useState(false);
-  const [resetEmailSent, setResetEmailSent] = useState(false);
-  const [isResetPasswordFlow, setIsResetPasswordFlow] = useState(false);
+  const [isCheckingUser, setIsCheckingUser] = useState(false);
+  const [isSigningIn, setIsSigningIn] = useState(false);
 
+  console.log('Auth component render:', {
+    isAuthenticated,
+    authLoading,
+    hookLoading,
+    hasAuthError: !!authError
+  });
+
+  // Navigate when authenticated
   useEffect(() => {
-    // Check if we're in the password reset flow
-    const hash = location.hash;
-    if (hash && hash.includes('type=recovery')) {
-      setIsResetPasswordFlow(true);
+    console.log('Auth navigation effect:', {
+      isAuthenticated,
+      authLoading,
+      hookLoading
+    });
+    
+    if (isAuthenticated && !authLoading && !hookLoading) {
+      console.log('Navigating to home...');
+      navigate('/');
     }
-  }, [location]);
+  }, [isAuthenticated, authLoading, hookLoading, navigate]);
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -50,51 +63,6 @@ export const Auth: React.FC = () => {
     return true;
   };
 
-  const handleResetPassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email) {
-      setValidationError('Please enter your email address');
-      return;
-    }
-
-    try {
-      setIsButtonDisabled(true);
-      await resetPassword(email);
-      setResetEmailSent(true);
-      setValidationError(null);
-    } catch (error) {
-      const errorMessage = (error as Error).message;
-      if (errorMessage.includes('rate_limit')) {
-        setCooldownTime(35);
-        setValidationError('Please wait 35 seconds before requesting another email');
-      } else {
-        setValidationError(errorMessage);
-      }
-    } finally {
-      setIsButtonDisabled(false);
-    }
-  };
-
-  const handleUpdatePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!validatePassword(password)) return;
-    
-    if (password !== confirmPassword) {
-      setValidationError('Passwords do not match');
-      return;
-    }
-
-    try {
-      setIsButtonDisabled(true);
-      await updatePassword(password);
-      navigate('/');
-    } catch (error) {
-      setValidationError((error as Error).message);
-    } finally {
-      setIsButtonDisabled(false);
-    }
-  };
-
   const checkUserExists = async (email: string) => {
     try {
       setValidationError(null);
@@ -109,7 +77,7 @@ export const Auth: React.FC = () => {
         return;
       }
 
-      setIsButtonDisabled(true);
+      setIsCheckingUser(true);
       const { data, error } = await supabase.auth.signInWithOtp({
         email,
         options: {
@@ -132,7 +100,7 @@ export const Auth: React.FC = () => {
       console.error('Error checking user:', error);
       setValidationError('An error occurred while checking the email. Please try again.');
     } finally {
-      setIsButtonDisabled(false);
+      setIsCheckingUser(false);
     }
   };
 
@@ -154,14 +122,15 @@ export const Auth: React.FC = () => {
     }
 
     try {
-      if (isExistingUser) {
-        await signIn(email, password);
-      } else {
-        await signUp(email, password);
-      }
-      navigate('/');
+      console.log('Starting sign in submission...');
+      setIsSigningIn(true);
+      await signIn(email, password);
+      console.log('Sign in submission complete');
     } catch (error) {
-      console.error('Authentication error:', error);
+      console.error('Authentication error in component:', error);
+      setValidationError(getErrorMessage((error as Error).message));
+    } finally {
+      setIsSigningIn(false);
     }
   };
 
@@ -180,160 +149,21 @@ export const Auth: React.FC = () => {
     }
   };
 
-  if (isResetPasswordFlow) {
+  // Show loading state while checking authentication
+  const isGlobalLoading = (authLoading || hookLoading) && !isSigningIn && !isCheckingUser;
+  
+  if (isGlobalLoading) {
+    console.log('Rendering loading state', {
+      authLoading,
+      hookLoading,
+      isSigningIn,
+      isCheckingUser
+    });
     return (
-      <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-        <div className="sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="flex justify-center">
-            <Linkedin className="h-12 w-12 text-blue-600" />
-          </div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Reset Your Password
-          </h2>
-        </div>
-
-        <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-            {validationError && (
-              <div className="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-md p-3">
-                <AlertCircle className="h-5 w-5" />
-                <span>{validationError}</span>
-              </div>
-            )}
-
-            <form className="space-y-6" onSubmit={handleUpdatePassword}>
-              <div>
-                <label htmlFor="new-password" className="block text-sm font-medium text-gray-700">
-                  New Password
-                </label>
-                <div className="mt-1">
-                  <input
-                    id="new-password"
-                    name="new-password"
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                    placeholder="Enter your new password"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label htmlFor="confirm-password" className="block text-sm font-medium text-gray-700">
-                  Confirm Password
-                </label>
-                <div className="mt-1">
-                  <input
-                    id="confirm-password"
-                    name="confirm-password"
-                    type="password"
-                    required
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                    placeholder="Confirm your new password"
-                  />
-                </div>
-              </div>
-
-              <Button
-                type="submit"
-                variant="primary"
-                fullWidth
-                isLoading={isLoading}
-              >
-                Update Password
-              </Button>
-            </form>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (showResetPassword) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-        <div className="sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="flex justify-center">
-            <Linkedin className="h-12 w-12 text-blue-600" />
-          </div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Reset Your Password
-          </h2>
-        </div>
-
-        <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-          <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-            {!resetEmailSent ? (
-              <>
-                <button
-                  onClick={() => setShowResetPassword(false)}
-                  className="flex items-center text-sm text-gray-600 hover:text-gray-900 mb-4"
-                >
-                  <ArrowLeft className="h-4 w-4 mr-1" />
-                  Back to login
-                </button>
-
-                {validationError && (
-                  <div className="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-md p-3">
-                    <AlertCircle className="h-5 w-5" />
-                    <span>{validationError}</span>
-                  </div>
-                )}
-
-                <form className="space-y-6" onSubmit={handleResetPassword}>
-                  <div>
-                    <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                      Email address
-                    </label>
-                    <div className="mt-1">
-                      <input
-                        id="email"
-                        name="email"
-                        type="email"
-                        autoComplete="email"
-                        required
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                        placeholder="Enter your email address"
-                      />
-                    </div>
-                  </div>
-
-                  <Button
-                    type="submit"
-                    variant="primary"
-                    fullWidth
-                    isLoading={isLoading}
-                  >
-                    Send Reset Link
-                  </Button>
-                </form>
-              </>
-            ) : (
-              <div className="text-center">
-                <div className="mb-4 text-green-600">
-                  ✓ Password reset email sent
-                </div>
-                <p className="text-sm text-gray-600 mb-6">
-                  Check your email for a link to reset your password. If it doesn't appear within a few minutes, check your spam folder.
-                </p>
-                <button
-                  onClick={() => {
-                    setShowResetPassword(false);
-                    setResetEmailSent(false);
-                  }}
-                  className="text-sm text-blue-600 hover:text-blue-500"
-                >
-                  Return to login
-                </button>
-              </div>
-            )}
-          </div>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-600"></div>
+          <p className="mt-4 text-sm text-gray-600">Checking authentication...</p>
         </div>
       </div>
     );
@@ -352,10 +182,10 @@ export const Auth: React.FC = () => {
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          {(error || validationError) && (
+          {(authError || validationError) && (
             <div className="mb-4 flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-md p-3">
               <AlertCircle className="h-5 w-5" />
-              <span>{getErrorMessage(error || validationError)}</span>
+              <span>{getErrorMessage(authError || validationError)}</span>
             </div>
           )}
 
@@ -388,20 +218,11 @@ export const Auth: React.FC = () => {
                   type="submit"
                   variant="primary"
                   fullWidth
-                  isLoading={isLoading}
+                  isLoading={isCheckingUser}
                   disabled={isButtonDisabled || cooldownTime > 0}
                 >
                   {cooldownTime > 0 ? `Wait ${cooldownTime}s` : 'Continue'}
                 </Button>
-              </div>
-
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-gray-300" />
-                </div>
-                <div className="relative flex justify-center text-sm">
-                  <span className="px-2 bg-white text-gray-500">Development mode</span>
-                </div>
               </div>
             </form>
           ) : (
@@ -436,7 +257,7 @@ export const Auth: React.FC = () => {
                     id="password"
                     name="password"
                     type="password"
-                    autoComplete={isExistingUser ? "current-password" : "new-password"}
+                    autoComplete="current-password"
                     required
                     value={password}
                     onChange={(e) => {
@@ -445,29 +266,18 @@ export const Auth: React.FC = () => {
                     }}
                     className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
                     minLength={6}
-                    placeholder={isExistingUser ? "Enter your password" : "Create a password (min. 6 characters)"}
+                    placeholder="Enter your password"
                   />
                 </div>
-                {isExistingUser && (
-                  <div className="mt-2 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => setShowResetPassword(true)}
-                      className="text-sm text-blue-600 hover:text-blue-500"
-                    >
-                      Forgot password?
-                    </button>
-                  </div>
-                )}
               </div>
 
               <Button
                 type="submit"
                 variant="primary"
                 fullWidth
-                isLoading={isLoading}
+                isLoading={isSigningIn}
               >
-                {isExistingUser ? 'Sign in' : 'Create account'}
+                Sign in
               </Button>
             </form>
           )}

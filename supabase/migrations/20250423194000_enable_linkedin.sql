@@ -4,8 +4,11 @@ BEGIN
     -- First, ensure the auth schema exists
     CREATE SCHEMA IF NOT EXISTS auth;
 
-    -- Create the providers table if it doesn't exist
-    CREATE TABLE IF NOT EXISTS auth.providers (
+    -- Drop existing providers table if it exists
+    DROP TABLE IF EXISTS auth.providers;
+
+    -- Create the providers table with the correct schema
+    CREATE TABLE auth.providers (
         provider_id text PRIMARY KEY,
         enabled boolean DEFAULT false,
         client_id text,
