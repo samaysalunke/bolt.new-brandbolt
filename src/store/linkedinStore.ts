@@ -6,21 +6,8 @@ interface LinkedInProfile {
   firstName: string;
   lastName: string;
   headline?: string;
-  profilePicture?: string;
   email: string;
-  industry?: string;
-  location?: string;
-  connections?: number;
-}
-
-interface LinkedInPost {
-  id: string;
-  content: string;
-  visibility: string;
-  published_at: string;
-  likes_count: number;
-  comments_count: number;
-  shares_count: number;
+  picture?: string;
 }
 
 interface LinkedInStats {
@@ -34,7 +21,6 @@ interface LinkedInStats {
 interface LinkedInState {
   profile: LinkedInProfile | null;
   stats: LinkedInStats | null;
-  posts: LinkedInPost[];
   isLoading: boolean;
   error: string | null;
   lastFetched: Date | null;
@@ -48,7 +34,6 @@ interface LinkedInActions {
 const initialState: LinkedInState = {
   profile: null,
   stats: null,
-  posts: [],
   isLoading: false,
   error: null,
   lastFetched: null,
@@ -60,82 +45,56 @@ export const useLinkedInStore = create<LinkedInState & LinkedInActions>((set) =>
   fetchLinkedInData: async () => {
     try {
       set({ isLoading: true, error: null });
+      console.log('Fetching LinkedIn data...');
 
-      // Get the current session to check for LinkedIn token
-      const { data: { session } } = await supabase.auth.getSession();
+      // Get the current session
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       
-      if (!session?.provider_token) {
-        throw new Error('No LinkedIn access token available');
+      if (sessionError) {
+        throw sessionError;
       }
 
-      // Fetch LinkedIn profile data
-      const profileResponse = await fetch('https://api.linkedin.com/v2/me', {
-        headers: {
-          'Authorization': `Bearer ${session.provider_token}`,
-          'X-Restli-Protocol-Version': '2.0.0',
-        },
-      });
-
-      if (!profileResponse.ok) {
-        console.error('LinkedIn API Error:', {
-          status: profileResponse.status,
-          statusText: profileResponse.statusText,
-        });
-        throw new Error('Failed to fetch LinkedIn data');
+      if (!session?.user) {
+        throw new Error('No authenticated user found');
       }
 
-      const profileData = await profileResponse.json();
+      // Get user claims which contain LinkedIn profile data
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
       
-      // Fetch posts data
-      const postsResponse = await fetch(
-        'https://api.linkedin.com/v2/ugcPosts?q=authors&authors=List(urn:li:person:' + profileData.id + ')',
-        {
-          headers: {
-            'Authorization': `Bearer ${session.provider_token}`,
-            'X-Restli-Protocol-Version': '2.0.0',
-          },
-        }
-      );
-
-      if (!postsResponse.ok) {
-        console.error('LinkedIn Posts API Error:', {
-          status: postsResponse.status,
-          statusText: postsResponse.statusText,
-        });
+      if (userError) {
+        throw userError;
       }
 
-      const postsData = await postsResponse.json();
-      console.log('LinkedIn Posts Data:', postsData);
+      if (!user) {
+        throw new Error('No user data available');
+      }
 
-      // Transform the profile data
+      console.log('User data:', user);
+
+      // Extract profile data from user metadata
       const profile: LinkedInProfile = {
-        id: profileData.id,
-        firstName: profileData.localizedFirstName,
-        lastName: profileData.localizedLastName,
-        headline: profileData.localizedHeadline,
-        profilePicture: profileData.profilePicture?.['displayImage~']?.elements[0]?.identifiers[0]?.identifier,
-        email: session.user?.email || '',
-        industry: profileData.localizedIndustry,
+        id: user.id,
+        firstName: user.user_metadata?.full_name?.split(' ')[0] || '',
+        lastName: user.user_metadata?.full_name?.split(' ').slice(1).join(' ') || '',
+        email: user.email || '',
+        picture: user.user_metadata?.avatar_url,
       };
 
-      // Transform the posts data
-      const posts: LinkedInPost[] = postsData.elements?.map((post: any) => ({
-        id: post.id,
-        content: post.specificContent?.['com.linkedin.ugc.ShareContent']?.shareCommentary?.text || '',
-        visibility: post.visibility?.['com.linkedin.ugc.MemberNetworkVisibility'] || 'CONNECTIONS',
-        published_at: new Date(post.created?.time || Date.now()).toISOString(),
-        likes_count: post.socialDetail?.totalSocialActivityCounts?.numLikes || 0,
-        comments_count: post.socialDetail?.totalSocialActivityCounts?.numComments || 0,
-        shares_count: post.socialDetail?.totalSocialActivityCounts?.numShares || 0,
-      })) || [];
+      // For now, we'll use placeholder stats since we don't have direct API access
+      const stats: LinkedInStats = {
+        followers: 0,
+        connections: 0,
+        profileViews: 0,
+        postImpressions: 0,
+        engagementRate: 0,
+      };
 
       // Store in Supabase for persistence
       const { error: dbError } = await supabase
         .from('linkedin_profiles')
         .upsert({
-          user_id: session.user.id,
+          user_id: user.id,
           profile_data: profile,
-          posts_data: posts,
           last_synced: new Date().toISOString(),
         }, {
           onConflict: 'user_id'
@@ -148,11 +107,13 @@ export const useLinkedInStore = create<LinkedInState & LinkedInActions>((set) =>
 
       set({
         profile,
-        posts,
+        stats,
         lastFetched: new Date(),
         isLoading: false,
         error: null,
       });
+
+      console.log('LinkedIn data fetched successfully:', { profile, stats });
     } catch (error) {
       console.error('Error fetching LinkedIn data:', error);
       set({

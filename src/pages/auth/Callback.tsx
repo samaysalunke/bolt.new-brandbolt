@@ -1,9 +1,9 @@
 import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuthStore } from '../store/authStore';
-import { supabase } from '../lib/supabase';
+import { useAuthStore } from '../../store/authStore';
+import { supabase } from '../../lib/supabase';
 
-export const AuthCallback: React.FC = () => {
+const Callback: React.FC = () => {
   const navigate = useNavigate();
   const { initializeAuth } = useAuthStore();
 
@@ -11,7 +11,7 @@ export const AuthCallback: React.FC = () => {
     const handleCallback = async () => {
       try {
         console.log('Starting callback handling...');
-        
+
         // Get the session from the URL
         const { data: { session }, error } = await supabase.auth.getSession();
         
@@ -26,7 +26,7 @@ export const AuthCallback: React.FC = () => {
         }
 
         console.log('Callback successful:', {
-          user: session.user.id,
+          userId: session.user.id,
           provider: session.user.app_metadata.provider,
           email: session.user.email
         });
@@ -34,21 +34,17 @@ export const AuthCallback: React.FC = () => {
         // Initialize auth state
         await initializeAuth();
 
-        // Small delay to ensure state is updated
-        await new Promise(resolve => setTimeout(resolve, 500));
-
         // Redirect to dashboard
         console.log('Redirecting to dashboard...');
-        navigate('/', { replace: true });
+        window.location.href = '/';
       } catch (error) {
         console.error('Callback error:', error);
-        // For now, just redirect to home on error
-        navigate('/', { replace: true });
+        window.location.href = '/';
       }
     };
 
     handleCallback();
-  }, [navigate, initializeAuth]);
+  }, [initializeAuth]);
 
   return (
     <div className="min-h-screen flex items-center justify-center">
@@ -58,4 +54,6 @@ export const AuthCallback: React.FC = () => {
       </div>
     </div>
   );
-}; 
+};
+
+export default Callback; 

@@ -11,11 +11,10 @@ console.log('Initializing Supabase client with URL:', supabaseUrl);
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
+    autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: true,
     flowType: 'implicit',
-    autoRefreshToken: true,
-    debug: true,
     storage: window.localStorage,
     storageKey: 'supabase.auth.token',
   },
@@ -27,6 +26,6 @@ supabase.auth.getSession().then(({ data: { session }, error }) => {
     hasSession: !!session,
     error: error?.message,
     provider: session?.user?.app_metadata?.provider,
-    redirectUrl: window.location.origin + '/auth/callback'
+    userId: session?.user?.id
   });
 });

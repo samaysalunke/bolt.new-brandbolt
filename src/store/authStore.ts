@@ -23,7 +23,7 @@ interface AuthActions {
 const initialState: AuthState = {
   session: null,
   user: null,
-  isLoading: true,
+  isLoading: false,
   error: null,
   isAuthenticated: false,
   isInitialized: false
@@ -38,92 +38,80 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
   initializeAuth: async () => {
     const currentState = get();
     
-    // If already initialized and not loading, no need to initialize again
+    // Don't re-initialize if already initialized and not loading
     if (currentState.isInitialized && !currentState.isLoading) {
-      console.log('Auth already initialized, skipping...', {
-        isAuthenticated: currentState.isAuthenticated,
-        hasUser: !!currentState.user
-      });
       return;
     }
 
-    // If there's an existing initialization in progress, wait for it
-    if (initializationPromise) {
-      console.log('Auth initialization already in progress, waiting...');
-      await initializationPromise;
-      return;
-    }
-
-    console.log('Starting new auth initialization...');
     try {
-      // Create new initialization promise
-      initializationPromise = (async () => {
-        set({ isLoading: true, error: null });
-        
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-        console.log('Got session:', { hasSession: !!session, error: sessionError });
-        
-        if (sessionError) throw sessionError;
+      set({ isLoading: true, error: null });
+      console.log('Initializing auth...');
+      
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError) {
+        console.error('Session error:', sessionError);
+        throw sessionError;
+      }
 
-        if (!session) {
-          console.log('No session found, setting unauthenticated state');
-          set({ 
-            session: null, 
-            user: null, 
-            isAuthenticated: false,
-            isLoading: false,
-            isInitialized: true
-          });
-          return;
-        }
+      console.log('Session check:', {
+        hasSession: !!session,
+        provider: session?.user?.app_metadata?.provider,
+        userId: session?.user?.id
+      });
 
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-        console.log('Got user:', { hasUser: !!user, error: userError });
-        
-        if (userError) throw userError;
-
-        if (!user) {
-          console.log('No user found, setting unauthenticated state');
-          set({ 
-            session: null, 
-            user: null, 
-            isAuthenticated: false,
-            isLoading: false,
-            isInitialized: true
-          });
-          return;
-        }
-
-        // Log user data if they're connected with LinkedIn
-        if (user.app_metadata?.provider === 'linkedin_oidc') {
-          console.log('LinkedIn User Data:', {
-            id: user.id,
-            email: user.email,
-            provider: user.app_metadata.provider,
-            hasAccessToken: !!session.provider_token,
-            identities: user.identities,
-            lastSignIn: user.last_sign_in_at,
-          });
-        }
-
-        console.log('Auth initialization successful:', { 
-          userId: user.id,
-          isAuthenticated: true
-        });
-
+      // If no session, set initialized state and return
+      if (!session) {
         set({ 
-          session, 
-          user,
-          isAuthenticated: true,
+          session: null, 
+          user: null, 
+          isAuthenticated: false,
           isLoading: false,
           isInitialized: true,
           error: null
         });
-      })();
+        return;
+      }
 
-      await initializationPromise;
+      // Get user data
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError) {
+        console.error('User error:', userError);
+        throw userError;
+      }
+
+      // If no user, set initialized state and return
+      if (!user) {
+        set({ 
+          session: null, 
+          user: null, 
+          isAuthenticated: false,
+          isLoading: false,
+          isInitialized: true,
+          error: null
+        });
+        return;
+      }
+
+      console.log('Auth initialized with user:', {
+        id: user.id,
+        email: user.email,
+        provider: user.app_metadata.provider
+      });
+
+      // Set successful auth state
+      set({ 
+        session, 
+        user,
+        isAuthenticated: true,
+        isLoading: false,
+        isInitialized: true,
+        error: null
+      });
     } catch (error) {
       console.error('Auth initialization error:', error);
+      // Set error state but mark as initialized
       set({ 
         session: null, 
         user: null, 
@@ -132,8 +120,6 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
         isInitialized: true,
         error: error instanceof Error ? error.message : 'Failed to initialize auth'
       });
-    } finally {
-      initializationPromise = null;
     }
   },
 
@@ -183,66 +169,52 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
       set({ isLoading: true, error: null });
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
-      set({ user: null, session: null, isAuthenticated: false });
+      set({ 
+        user: null, 
+        session: null, 
+        isAuthenticated: false,
+        isInitialized: true,
+        isLoading: false 
+      });
     } catch (error) {
       console.error('Sign out error:', error);
-      set({ error: (error as Error).message });
-    } finally {
-      set({ isLoading: false });
+      set({ 
+        error: error instanceof Error ? error.message : 'Failed to sign out',
+        isLoading: false
+      });
     }
   },
 
-  setError: (error: string | null) => {
-    set({ error });
-  },
-
-  clearError: () => {
-    set({ error: null });
-  },
+  setError: (error: string | null) => set({ error }),
+  clearError: () => set({ error: null }),
 
   signInWithLinkedIn: async () => {
     try {
       set({ isLoading: true, error: null });
-      console.log('Initiating LinkedIn sign-in...');
+      console.log('Starting LinkedIn sign-in...');
       
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: 'linkedin_oidc',
         options: {
           redirectTo: `${window.location.origin}/auth/callback`,
-          scopes: 'openid profile email w_member_social',
+          scopes: 'openid profile email',
+          skipBrowserRedirect: false
         }
       });
 
-      if (error) throw error;
-      
-      // After successful OAuth, update the auth state
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError) throw sessionError;
-      
-      if (session) {
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-        if (userError) throw userError;
-        
-        // Log LinkedIn authentication success
-        console.log('LinkedIn Authentication Success:', {
-          provider: user?.app_metadata?.provider,
-          hasAccessToken: !!session.provider_token,
-          tokenExpiry: session.expires_at,
-        });
-        
-        set({ 
-          session, 
-          user, 
-          isAuthenticated: true,
-          isLoading: false,
-          error: null 
-        });
+      if (error) {
+        console.error('LinkedIn sign-in error:', error);
+        throw error;
       }
+
+      console.log('LinkedIn OAuth initiated:', data);
+      
     } catch (error) {
       console.error('LinkedIn sign-in error:', error);
-      set({ error: error instanceof Error ? error.message : 'Failed to sign in with LinkedIn' });
-    } finally {
-      set({ isLoading: false });
+      set({ 
+        error: error instanceof Error ? error.message : 'Failed to sign in with LinkedIn',
+        isLoading: false
+      });
     }
   },
 }));
